@@ -24,6 +24,7 @@ Write-Host "[+] " -ForegroundColor Green -NoNewline
 Write-Host "Downloading Tools"
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/cdnet01/Toolbox/refs/heads/main/tools.zip" -OutFile "C:\bin\tools.zip"
 Expand-Archive C:\bin\tools.zip -DestinationPath C:\bin
+Remove-Item -Path "C:\bin\tools.zip"
 
 Write-Host "[+] " -ForegroundColor Green -NoNewline
 Write-Host "Adding C:\bin to Path"
