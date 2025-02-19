@@ -10,7 +10,7 @@ if ($IsAdmin) {
 
 Write-Host "[+] " -ForegroundColor Green -NoNewline
 Write-Host "Creating C:\bin Directory for Tools"
-New-Item -ItemType Directory -Path "C:\bin"
+New-Item -ItemType Directory -Path "C:\bin" -Force
 
 Add-MpPreference -ExclusionPath "C:\bin" -Force
 Write-Host "[+] " -ForegroundColor Green -NoNewline
@@ -28,7 +28,20 @@ Remove-Item -Path "C:\bin\tools.zip"
 
 Write-Host "[+] " -ForegroundColor Green -NoNewline
 Write-Host "Adding C:\bin to Path"
-Set-PathVariable AddPath 'C:\bin'
+
+# Retrieve the current machine PATH
+$currentPath = [System.Environment]::GetEnvironmentVariable("Path", [System.EnvironmentVariableTarget]::Machine)
+
+# Check if C:\bin is already in the PATH
+if ($currentPath -notlike "*C:\bin*") {
+    $newPath = "$currentPath;C:\bin"
+    [System.Environment]::SetEnvironmentVariable("Path", $newPath, [System.EnvironmentVariableTarget]::Machine)
+    Write-Host "[+] " -ForegroundColor Green -NoNewline
+    Write-Host "C:\bin has been added to the machine PATH"
+} else {
+    Write-Host "[!] " -ForegroundColor Yellow -NoNewline
+    Write-Host "C:\bin is already in the machine PATH"
+}
 
 Write-Host "[+] " -ForegroundColor Green -NoNewline
 Write-Host "Adding BGInfo Config"
