@@ -556,11 +556,11 @@ In MMC, we can now attach the AD RSAT Snap-In:
 2. Select and Add all three Active Directory Snap-ins
 3. Click through any errors and warnings
 4. Right-click on Active Directory Domains and Trusts and select Change Forest
-5. Enter za.tryhackme.com as the Root domain and Click OK
+5. Enter domain.com as the Root domain and Click OK
 6. Right-click on Active Directory Sites and Services and select Change Forest
-7. Enter za.tryhackme.com as the Root domain and Click OK
+7. Enter domain.com as the Root domain and Click OK
 8. Right-click on Active Directory Users and Computers and select Change Domain
-9. Enter za.tryhackme.com as the Domain and Click OK
+9. Enter domain.com as the Domain and Click OK
 10. Right-click on Active Directory Users and Computers in the left-hand pane
 11. Click on View -> Advanced Features
 
