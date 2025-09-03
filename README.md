@@ -1043,8 +1043,6 @@ reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /V "AppUpdateMon" /
 <details>
 <summary><b>Windows</b></summary>
 
-<div style="margin-left:20px">
-
 <details>
 <summary>LOLBAS</summary>
 <a href="https://lolbas-project.github.io/#">https://lolbas-project.github.io/#</a>
@@ -1232,6 +1230,7 @@ rem get system info and patch info
 systeminfo
 Get-CimInstance -Class win32_quickfixengineering | Where-Object { $_.Description -eq "Security Update" }
 ```
+
 </details>
 
 ## Domination
