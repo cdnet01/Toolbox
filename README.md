@@ -1216,7 +1216,7 @@ c:\windows\system32sysprep\Unattended.xml
 ```
 </details>
 
-</details>
+<details>
 <summary>Exploits</summary>
 
 privileges that may lead to privilege escalation are SeBackupPrivilege, SeAssignPrimaryToken, SeLoadDriver, and SeDebug and SeImpersonatePrivilege.
