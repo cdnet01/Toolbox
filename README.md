@@ -1198,6 +1198,17 @@ winrm set winrm/config/client/auth '@{CredSSP ="true"}'
 
 rem trust any host
 Set-Item WSMan:localhost\client\trustedhosts -value *
+
+rem expose and use an smb share
+rem (on the "sharing" machine)
+net share ShareName=C:\Share /grant:Everyone,FULL
+icacls C:\Share /grant Everyone:F
+
+rem on the machine wanting to access the share
+rem if you need to authenticate 
+net use \\ms01\share /user:domain.com\user.name Password123
+net use \\ms01\share 
+dir \\ms01\share 
 ```
 </details>
 
